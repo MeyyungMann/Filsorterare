@@ -1,4 +1,4 @@
-# thon main.py --input-dir ./test_file
+# python main.py --input-dir ./test_files
 
 #!/usr/bin/env python3
 import argparse
@@ -86,17 +86,20 @@ def main():
             logging.error("No supported files found in the input directory")
             return
         
+        # Convert files_content to dictionary for easier access
+        file_contents_dict = {path: content for path, content in files_content}
+        
         # 2. Create embeddings
         embedder = ContentEmbedder()
         file_embeddings = embedder.create_embeddings(files_content)
         
         # 3. Cluster files
         clusterer = ContentClusterer()
-        clusters = clusterer.cluster_files(file_embeddings)
+        clusters = clusterer.cluster_files(file_embeddings, file_contents_dict)
         
-        # 4. Suggest categories
+        # 4. Suggest categories - Now passing file_contents_dict
         suggester = CategorySuggester()
-        categories = suggester.suggest_categories(clusters)
+        categories = suggester.suggest_categories(clusters, file_contents_dict)
         
         # 5. Get user confirmation if not in headless mode
         if not args.headless and not get_user_confirmation(categories, clusters):

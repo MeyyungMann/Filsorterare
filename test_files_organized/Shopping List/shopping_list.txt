@@ -1,0 +1,8 @@
+
+    Grocery Shopping List:
+    - Milk
+    - Eggs
+    - Bread
+    - Fruits
+    - Vegetables
+    

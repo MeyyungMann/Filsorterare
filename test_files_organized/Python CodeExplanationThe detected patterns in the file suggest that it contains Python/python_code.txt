@@ -1,0 +1,8 @@
+
+    def hello_world():
+        print("Hello, World!")
+        
+    class Calculator:
+        def add(self, x, y):
+            return x + y
+    
