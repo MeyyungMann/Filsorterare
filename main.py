@@ -1,4 +1,5 @@
 # python main.py --input-dir ./test_file
+# python main.py --input-dir ./test_files --dry-run
 # add commit comment
 
 #!/usr/bin/env python3

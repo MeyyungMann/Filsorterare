@@ -1,6 +1,0 @@
-
-    TODO List:
-    1. Finish project
-    2. Review code
-    3. Update documentation
-    

@@ -24,6 +24,53 @@ CATEGORY_GUIDELINES = {
     "document": "Use 'General Notes' for uncategorized or miscellaneous content."
 }
 
+# Define short category mappings
+CATEGORY_MAPPINGS = {
+    # Code related
+    "python_function": "code",
+    "python_class": "code",
+    "python_import": "code",
+    "code": "code",
+    
+    # Task related
+    "todo": "task",
+    "task": "task",
+    "checklist": "task",
+    "personal_todo": "task",
+    "numbered_list": "task",
+    "capitalized_list": "task",
+    
+    # Document related
+    "markdown_headers": "doc",
+    "proper_sentences": "doc",
+    "narrative": "doc",
+    "work_document": "doc",
+    
+    # List related
+    "markdown_table": "list",
+    "tab_separated": "list",
+    "list": "list",
+    
+    # Shopping related
+    "shopping": "personal",
+    "grocery": "personal",
+    "personal_shopping": "personal",
+    
+    # Meeting related
+    "meeting": "meeting",
+    "agenda": "meeting",
+    "minutes": "meeting"
+}
+
+# Fallback categories for different content types
+FALLBACK_CATEGORIES = {
+    "code": "code",
+    "list": "list",
+    "table": "data",
+    "narrative": "doc",
+    "default": "misc"
+}
+
 class CategorySuggester:
     def __init__(self, model_path: str = r"C:\Users\meyyu\Desktop\mistral_7"):
         """
@@ -63,11 +110,12 @@ class CategorySuggester:
             "semantic_patterns": defaultdict(list)
         }
 
-    def _analyze_content(self, content: str) -> Dict:
+    def _analyze_content(self, content: str, file_path: Path = None) -> Dict:
         """
         Analyze content to identify patterns and characteristics.
         Args:
             content: File content
+            file_path: Path of the file being analyzed
         Returns:
             Dictionary of content analysis results
         """
@@ -84,10 +132,23 @@ class CategorySuggester:
             "content_patterns": set()
         }
         
+        # Check filename for patterns
+        if file_path:
+            filename = file_path.stem.lower()
+            if any(word in filename for word in ['todo', 'task', 'checklist']):
+                analysis["content_patterns"].add("todo")
+            if any(word in filename for word in ['meeting', 'agenda', 'minutes']):
+                analysis["content_patterns"].add("meeting")
+            if any(word in filename for word in ['shopping', 'grocery']):
+                analysis["content_patterns"].add("shopping")
+            if any(word in filename for word in ['code', 'script', 'py']):
+                analysis["content_patterns"].add("code")
+        
         # Analyze format
         if re.search(r'(def|class|import|return|print|function|var|const|let)\s', content):
             analysis["format"]["is_code"] = True
             analysis["structure"].append("code")
+            analysis["content_patterns"].add("code")
             
         if re.search(r'^[\s-]*[-*•]\s', content, re.MULTILINE):
             analysis["format"]["is_list"] = True
@@ -109,8 +170,17 @@ class CategorySuggester:
             
         # Add frequent words as semantic features
         for word, freq in word_freq.items():
-            if freq > 2:
+            if freq > 1:  # Lowered threshold to catch more patterns
                 analysis["semantic_features"].add(word)
+                # Direct mapping of common words to patterns
+                if word in ['todo', 'task', 'checklist']:
+                    analysis["content_patterns"].add("todo")
+                elif word in ['meeting', 'agenda', 'minutes']:
+                    analysis["content_patterns"].add("meeting")
+                elif word in ['shopping', 'grocery', 'milk', 'eggs', 'bread']:
+                    analysis["content_patterns"].add("shopping")
+                elif word in ['report', 'document', 'notes']:
+                    analysis["content_patterns"].add("doc")
 
         # Identify content patterns
         self._identify_content_patterns(content, analysis)
@@ -154,89 +224,34 @@ class CategorySuggester:
             if re.search(r'^[A-Z][^.!?]*[.!?]', content, re.MULTILINE):
                 analysis["content_patterns"].add("proper_sentences")
 
-    def _generate_prompt(self, file_paths: List[Path], file_contents: Dict[Path, str]) -> str:
+    def _get_short_category(self, analysis: Dict) -> str:
         """
-        Generate a prompt for the model based on file paths and their contents.
+        Get a short category name based on content analysis.
         Args:
-            file_paths: List of file paths in a cluster
-            file_contents: Dictionary mapping file paths to their contents
+            analysis: Content analysis dictionary
         Returns:
-            Formatted prompt string
+            Short category name
         """
-        # Analyze each file's content
-        file_info = []
-        all_patterns = set()
-        all_features = set()
+        # First try to match content patterns
+        for pattern in analysis["content_patterns"]:
+            if pattern in CATEGORY_MAPPINGS:
+                return CATEGORY_MAPPINGS[pattern]
         
-        for path in file_paths:
-            content = file_contents.get(path, "")
-            analysis = self._analyze_content(content)
-            all_patterns.update(analysis["content_patterns"])
-            all_features.update(analysis["semantic_features"])
-            
-            # Get first 3 lines of content or first 200 characters
-            preview = content.split('\n')[:3]
-            preview = '\n'.join(preview)[:200]
-            
-            file_info.append(
-                f"File: {path.name}\n"
-                f"Format: {', '.join(analysis['structure']) if analysis['structure'] else 'General text'}\n"
-                f"Patterns: {', '.join(analysis['content_patterns']) if analysis['content_patterns'] else 'None'}\n"
-                f"Preview: {preview}\n"
-            )
-
-        prompt = f"""Given these files and their content analysis:
-
-{''.join(file_info)}
-
-Content Analysis:
-- Detected Patterns: {', '.join(all_patterns) if all_patterns else 'None'}
-- Semantic Features: {', '.join(all_features) if all_features else 'None'}
-
-Please suggest a category name for these files based on their content and purpose.
-The category name should be:
-1. Short and descriptive (1-3 words)
-2. In English
-3. Reflect the common theme or purpose of these files
-4. Be specific enough to distinguish from other categories
-5. Use common file organization conventions
-
-Consider:
-- The detected content patterns
-- The semantic features
-- The file structure and format
-- Common file organization practices
-
-Category name:"""
-        return prompt
-
-    def _get_category_suggestion(self, prompt: str) -> str:
-        """
-        Get a category suggestion from the model.
-        Args:
-            prompt: The prompt to send to the model
-        Returns:
-            Suggested category name
-        """
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        # Then try to match format
+        for format_type, is_present in analysis["format"].items():
+            if is_present and format_type in FALLBACK_CATEGORIES:
+                return FALLBACK_CATEGORIES[format_type]
         
-        with torch.no_grad():
-            outputs = self.model.generate(
-                **inputs,
-                max_new_tokens=20,
-                temperature=0.7,
-                top_p=0.9,
-                do_sample=True
-            )
+        # Finally, check semantic features
+        for feature in analysis["semantic_features"]:
+            if feature in CATEGORY_MAPPINGS:
+                return CATEGORY_MAPPINGS[feature]
         
-        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        # Extract just the category name from the response
-        category = response.split("Category name:")[-1].strip()
-        return category
+        return FALLBACK_CATEGORIES["default"]
 
     def suggest_categories(self, clusters: Dict[int, List[Path]], file_contents: Dict[Path, str]) -> Dict[int, str]:
         """
-        Suggest category names for each cluster of files.
+        Suggest categories for clusters of files.
         Args:
             clusters: Dictionary mapping cluster IDs to lists of file paths
             file_contents: Dictionary mapping file paths to their contents
@@ -246,13 +261,35 @@ Category name:"""
         categories = {}
         
         for cluster_id, file_paths in clusters.items():
-            prompt = self._generate_prompt(file_paths, file_contents)
-            try:
-                category = self._get_category_suggestion(prompt)
-                categories[cluster_id] = category
-                logging.info(f"Cluster {cluster_id} suggested category: {category}")
-            except Exception as e:
-                logging.error(f"Error generating category for cluster {cluster_id}: {str(e)}")
-                categories[cluster_id] = f"Category_{cluster_id}"
+            # Analyze all files in the cluster
+            cluster_patterns = set()
+            cluster_features = set()
+            format_counts = defaultdict(int)
+            
+            for path in file_paths:
+                content = file_contents.get(path, "")
+                analysis = self._analyze_content(content, path)  # Pass file path for filename analysis
+                cluster_patterns.update(analysis["content_patterns"])
+                cluster_features.update(analysis["semantic_features"])
                 
+                # Count format types
+                for format_type, is_present in analysis["format"].items():
+                    if is_present:
+                        format_counts[format_type] += 1
+            
+            # Get the most common format
+            dominant_format = max(format_counts.items(), key=lambda x: x[1])[0] if format_counts else "default"
+            
+            # Create a combined analysis
+            combined_analysis = {
+                "content_patterns": cluster_patterns,
+                "semantic_features": cluster_features,
+                "format": {k: v > 0 for k, v in format_counts.items()},
+                "dominant_format": dominant_format
+            }
+            
+            # Get short category name
+            category = self._get_short_category(combined_analysis)
+            categories[cluster_id] = category
+            
         return categories
