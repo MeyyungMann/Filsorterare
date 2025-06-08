@@ -4,9 +4,10 @@ from pathlib import Path
 import torch
 from sentence_transformers import SentenceTransformer
 import numpy as np
+from config import BATCH_SIZE, EMBEDDING_MODEL
 
 class ContentEmbedder:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = EMBEDDING_MODEL):
         """
         Initialize the embedder with a specific sentence transformer model.
         Args:
@@ -42,7 +43,7 @@ class ContentEmbedder:
             # Create embeddings in batches
             embeddings = self.model.encode(
                 contents,
-                batch_size=32,
+                batch_size=BATCH_SIZE,
                 show_progress_bar=True,
                 convert_to_numpy=True
             )

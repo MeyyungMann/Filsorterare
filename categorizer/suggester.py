@@ -8,9 +8,10 @@ import numpy as np
 from collections import defaultdict
 import re
 from sklearn.metrics.pairwise import cosine_similarity
+from config import LOCAL_MISTRAL_PATH, EMBEDDING_MODEL
 
 class CategorySuggester:
-    def __init__(self, model_path: str = r"C:\\Users\\meyyu\\Desktop\\mistral_7"):
+    def __init__(self, model_path: str = LOCAL_MISTRAL_PATH):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logging.info(f"Using device: {self.device}")
 
@@ -26,7 +27,7 @@ class CategorySuggester:
             logging.error(f"Error loading model from {model_path}: {str(e)}")
             raise
 
-        self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        self.embedder = SentenceTransformer(EMBEDDING_MODEL)
 
     def merge_similar_clusters(self, categories: Dict[str, str]) -> Dict[str, str]:
         names = list(set(categories.values()))

@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
-import mimetypes
 import docx
 import PyPDF2
 import chardet
@@ -13,7 +12,7 @@ import xml.etree.ElementTree as ET
 class FileLoader:
     def __init__(self):
         self.supported_extensions = {
-            # Text-based files
+            # Text-based files (all use _read_text_file)
             '.txt': self._read_text_file,
             '.py': self._read_text_file,
             '.md': self._read_text_file,
@@ -22,20 +21,6 @@ class FileLoader:
             '.ini': self._read_text_file,
             '.conf': self._read_text_file,
             '.cfg': self._read_text_file,
-            '.json': self._read_json_file,
-            '.yaml': self._read_yaml_file,
-            '.yml': self._read_yaml_file,
-            '.xml': self._read_xml_file,
-            '.csv': self._read_csv_file,
-            '.tsv': self._read_csv_file,
-            
-            # Document files
-            '.pdf': self._read_pdf_file,
-            '.docx': self._read_docx_file,
-            '.doc': self._read_docx_file,
-            '.odt': self._read_text_file,  # OpenDocument Text
-            
-            # Code files
             '.js': self._read_text_file,
             '.ts': self._read_text_file,
             '.html': self._read_text_file,
@@ -53,12 +38,22 @@ class FileLoader:
             '.swift': self._read_text_file,
             '.kt': self._read_text_file,
             '.scala': self._read_text_file,
-            
-            # Data files
             '.sql': self._read_text_file,
             '.sh': self._read_text_file,
             '.bat': self._read_text_file,
             '.ps1': self._read_text_file,
+            '.odt': self._read_text_file,
+            
+            # Special format files
+            '.json': self._read_json_file,
+            '.yaml': self._read_yaml_file,
+            '.yml': self._read_yaml_file,
+            '.xml': self._read_xml_file,
+            '.csv': self._read_csv_file,
+            '.tsv': self._read_csv_file,
+            '.pdf': self._read_pdf_file,
+            '.docx': self._read_docx_file,
+            '.doc': self._read_docx_file,
         }
         
     def load_directory(self, directory_path: Path) -> List[Tuple[Path, str]]:

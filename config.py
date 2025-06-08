@@ -14,6 +14,7 @@ UTILS_DIR = PROJECT_ROOT / "utils"
 # Model settings
 MODEL_NAME = "mistral-7b"  # Local model name
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+BATCH_SIZE = 32  # Batch size for embedding generation
 
 # Local Mistral 7B model path
 LOCAL_MISTRAL_PATH = os.getenv("LOCAL_MISTRAL_PATH")

@@ -14,12 +14,11 @@ from categorizer.embedder import ContentEmbedder
 from categorizer.clusterer import ContentClusterer
 from categorizer.suggester import CategorySuggester
 from categorizer.organizer import FileOrganizer
+from utils.logger import setup_logger
 
 def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
+    logger = setup_logger("filsorterare")
+    return logger
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -66,26 +65,26 @@ def get_user_confirmation(categories: Dict[str, str], clusters: Dict[str, List[P
         print("Please answer 'yes' or 'no'")
 
 def main():
-    setup_logging()
+    logger = setup_logging()
     args = parse_args()
     
     input_path = Path(args.input_dir)
     if not input_path.exists():
-        logging.error(f"Input directory {input_path} does not exist")
+        logger.error(f"Input directory {input_path} does not exist")
         return
     
     output_path = Path(args.output_dir) if args.output_dir else input_path.parent / f"{input_path.name}_organized"
     
-    logging.info(f"Processing directory: {input_path}")
-    logging.info(f"Output directory: {output_path}")
-    logging.info(f"Mode: {'Headless' if args.headless else 'Interactive'}")
+    logger.info(f"Processing directory: {input_path}")
+    logger.info(f"Output directory: {output_path}")
+    logger.info(f"Mode: {'Headless' if args.headless else 'Interactive'}")
     
     try:
         # 1. Load files
         loader = FileLoader()
         files_content = loader.load_directory(input_path)
         if not files_content:
-            logging.error("No supported files found in the input directory")
+            logger.error("No supported files found in the input directory")
             return
         
         # Convert files_content to dictionary for easier access
@@ -105,7 +104,7 @@ def main():
         
         # 5. Get user confirmation if not in headless mode
         if not args.headless and not get_user_confirmation(categories, clusters):
-            logging.info("Organization cancelled by user")
+            logger.info("Organization cancelled by user")
             return
         
         # 6. Organize files
@@ -117,7 +116,7 @@ def main():
             print("\n" + organizer.create_summary(organized_files))
         
     except Exception as e:
-        logging.error(f"An error occurred: {str(e)}")
+        logger.error(f"An error occurred: {str(e)}")
         return 1
     
     return 0

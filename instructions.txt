@@ -1,7 +1,0 @@
-Alt 1: Skapa ett terminal-program som går igenom en folder-struktur och sorterar alla filer utifrån verkligt innehåll. När programmet startar så är det okänt vilken data som ska sorteras och till vilka kategorier. Programmet ska själv gå igenom materialet och föreslå ett sätt att organisera data. Via CLI flags ska programmet kunna exekvera antingen headless (ingen interaktivitet med användaren) eller i standardläge, där användaren får godkänna sorteringspolicyn innan den appliceras. Endast lokal AI får användas när programmet exekveras.
-
-For this project local mistral 7b will be used
-Pytorch nightly build with CUDA 12.8. Stick to this version
-The program will run will rtx5090, check for compatibility and suggest for smooth-running
-Always check for compatibility among the version of frameworks or libraries
-When changing the code, always check through all files for concistency
