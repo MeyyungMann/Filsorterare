@@ -54,6 +54,45 @@ class ContentEmbedder:
             logging.error(f"Error creating embeddings: {str(e)}")
             raise
     
+    def encode(self, text: str) -> np.ndarray:
+        """
+        Create an embedding for a single text string.
+        Args:
+            text: The text to encode
+        Returns:
+            numpy array containing the embedding
+        """
+        try:
+            if not isinstance(text, str):
+                raise ValueError(f"Expected string input, got {type(text)}")
+            
+            if not text.strip():
+                raise ValueError("Empty text input")
+            
+            # Create embedding for single text
+            embeddings = self.model.encode(
+                [text],  # Wrap in list since model expects a list of texts
+                convert_to_numpy=True,
+                show_progress_bar=False
+            )
+            
+            # Get the first embedding since we only encoded one text
+            embedding = embeddings[0]
+            
+            # Ensure we get a 1D array
+            if len(embedding.shape) > 1:
+                embedding = embedding.flatten()
+            
+            # Verify the output is a numpy array
+            if not isinstance(embedding, np.ndarray):
+                raise ValueError(f"Expected numpy array output, got {type(embedding)}")
+            
+            return embedding
+            
+        except Exception as e:
+            logging.error(f"Error creating embedding: {str(e)}")
+            raise
+    
     def get_embedding_dimension(self) -> int:
         """Return the dimension of the embeddings."""
         return self.model.get_sentence_embedding_dimension()

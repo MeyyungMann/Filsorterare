@@ -1,255 +1,365 @@
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 from collections import defaultdict
 import re
-
-CONTENT_TYPE_PATTERNS = {
-    "code": ['def ', 'class ', 'import ', 'return ', 'print('],
-    "personal_shopping": ['shopping', 'grocery', 'buy', 'milk', 'eggs', 'bread', 'food', 'vegetables', 'fruits'],
-    "personal_todo": ['todo', 'task', 'to-do', 'to do', 'checklist'],
-    "work_document": ['meeting', 'agenda', 'minutes', 'attendees', 'project', 'team', 'business', 'report', 'quarterly', 'sales']
-}
-
-CATEGORY_GUIDELINES = {
-    "code": "Use 'Source Code' for programming scripts or code snippets.",
-    "personal_shopping": "Use 'Shopping Lists' for grocery or purchase lists.",
-    "personal_todo": "Use 'Personal Tasks' for task lists or personal to-do items.",
-    "work_document": "Use 'Work Documents' for meetings, business reports, or agendas.",
-    "document": "Use 'General Notes' for uncategorized or miscellaneous content."
-}
-
-# Define short category mappings
-CATEGORY_MAPPINGS = {
-    # Code related
-    "python_function": "code",
-    "python_class": "code",
-    "python_import": "code",
-    "code": "code",
-    
-    # Task related
-    "todo": "task",
-    "task": "task",
-    "checklist": "task",
-    "personal_todo": "task",
-    "numbered_list": "task",
-    "capitalized_list": "task",
-    
-    # Document related
-    "markdown_headers": "doc",
-    "proper_sentences": "doc",
-    "narrative": "doc",
-    "work_document": "doc",
-    
-    # List related
-    "markdown_table": "list",
-    "tab_separated": "list",
-    "list": "list",
-    
-    # Shopping related
-    "shopping": "personal",
-    "grocery": "personal",
-    "personal_shopping": "personal",
-    
-    # Meeting related
-    "meeting": "meeting",
-    "agenda": "meeting",
-    "minutes": "meeting"
-}
-
-# Fallback categories for different content types
-FALLBACK_CATEGORIES = {
-    "code": "code",
-    "list": "list",
-    "table": "data",
-    "narrative": "doc",
-    "default": "misc"
-}
+from sklearn.metrics.pairwise import cosine_similarity
 
 class CategorySuggester:
-    def __init__(self, model_path: str = r"C:\Users\meyyu\Desktop\mistral_7"):
-        """
-        Initialize the suggester with the local Mistral model and automatic learning components.
-        Args:
-            model_path: Path to the local Mistral model
-        """
+    def __init__(self, model_path: str = r"C:\\Users\\meyyu\\Desktop\\mistral_7"):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logging.info(f"Using device: {self.device}")
-        
-        # Initialize the LLM
+
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_path)
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 device_map="auto" if self.device == "cuda" else None
-            )
-            if self.device == "cuda":
-                self.model = self.model.to(self.device)
+            ).to(self.device)
             logging.info(f"Loaded local model from: {model_path}")
         except Exception as e:
             logging.error(f"Error loading model from {model_path}: {str(e)}")
             raise
 
-        # Initialize the embedding model
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
-        
-        # Initialize pattern recognition
-        self.patterns = self._initialize_patterns()
 
-    def _initialize_patterns(self) -> Dict:
-        """Initialize base patterns for automatic recognition."""
-        return {
-            "content_patterns": defaultdict(list),
-            "structural_patterns": defaultdict(list),
-            "semantic_patterns": defaultdict(list)
-        }
+    def merge_similar_clusters(self, categories: Dict[str, str]) -> Dict[str, str]:
+        names = list(set(categories.values()))
+        name_embeddings = [self.embedder.encode(name) for name in names]
 
-    def _analyze_content(self, content: str, file_path: Path = None) -> Dict:
+        merged = {}
+        for i, name in enumerate(names):
+            merged[name] = name
+            for j in range(i + 1, len(names)):
+                sim = cosine_similarity([name_embeddings[i]], [name_embeddings[j]])[0][0]
+                if sim > 0.85:
+                    merged[names[j]] = name
+
+        new_categories = {}
+        for cluster_id, cat in categories.items():
+            new_categories[cluster_id] = merged.get(cat, cat)
+
+        return new_categories
+
+    def _analyze_content_similarity(self, file_paths: List[Path], file_contents: Dict[Path, str]) -> bool:
+        if len(file_paths) <= 1:
+            return True
+
+        content_embeddings = []
+        for path in file_paths:
+            content = file_contents.get(path, "")
+            embedding = self.embedder.encode(content)
+            embedding = embedding.flatten()
+            content_embeddings.append(embedding)
+
+        semantic_similarities = []
+        for i in range(len(content_embeddings)):
+            for j in range(i + 1, len(content_embeddings)):
+                similarity = torch.nn.functional.cosine_similarity(
+                    torch.tensor(content_embeddings[i]),
+                    torch.tensor(content_embeddings[j]),
+                    dim=0
+                )
+                semantic_similarities.append(similarity.item())
+
+        avg_similarity = sum(semantic_similarities) / len(semantic_similarities)
+
+        # Extract meaningful content chunks with improved handling of technical content
+        content_chunks = []
+        for path in file_paths:
+            content = file_contents.get(path, "")
+            
+            # Handle code blocks and technical sections
+            if path.suffix in {'.py', '.js', '.java', '.cpp', '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt', '.scala'}:
+                # For code files, split by functions/classes
+                chunks = [chunk.strip() for chunk in content.split('\n\n') if chunk.strip()]
+            else:
+                # For other files, split by paragraphs and preserve technical sections
+                chunks = []
+                current_chunk = []
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        if current_chunk:
+                            chunks.append('\n'.join(current_chunk))
+                            current_chunk = []
+                    else:
+                        current_chunk.append(line)
+                if current_chunk:
+                    chunks.append('\n'.join(current_chunk))
+            
+            content_chunks.extend(chunks)
+
+        # Create embeddings for content chunks
+        chunk_embeddings = []
+        for chunk in content_chunks:
+            embedding = self.embedder.encode(chunk)
+            embedding = embedding.flatten()
+            chunk_embeddings.append(embedding)
+
+        # Calculate chunk-level similarities
+        chunk_similarities = []
+        for i in range(len(chunk_embeddings)):
+            for j in range(i + 1, len(chunk_embeddings)):
+                similarity = torch.nn.functional.cosine_similarity(
+                    torch.tensor(chunk_embeddings[i]),
+                    torch.tensor(chunk_embeddings[j]),
+                    dim=0
+                )
+                chunk_similarities.append(similarity.item())
+
+        avg_chunk_similarity = sum(chunk_similarities) / len(chunk_similarities) if chunk_similarities else 0
+
+        # Enhanced keyword extraction for technical content
+        all_keywords = {}
+        for path in file_paths:
+            content = file_contents.get(path, "").lower()
+            
+            # Preserve technical terms and domain-specific words
+            words = []
+            for word in content.split():
+                # Keep technical terms intact (camelCase, snake_case, etc.)
+                if any(c.isupper() for c in word) or '_' in word:
+                    words.append(word)
+                else:
+                    # Clean regular words
+                    cleaned = word.strip('.,!?()[]{}":;')
+                    if len(cleaned) > 3 and cleaned.lower() not in {
+                        'this', 'that', 'with', 'from', 'have', 'they', 'what',
+                        'when', 'where', 'which', 'there', 'their', 'about',
+                        'would', 'think', 'could', 'should', 'because', 'through'
+                    }:
+                        words.append(cleaned)
+            
+            word_freq = {}
+            for word in words:
+                word_freq[word] = word_freq.get(word, 0) + 1
+            for word, freq in word_freq.items():
+                if word in all_keywords:
+                    all_keywords[word]['count'] += freq
+                    all_keywords[word]['files'].add(path)
+                else:
+                    all_keywords[word] = {'count': freq, 'files': {path}}
+
+        top_keywords = []
+        for word, data in all_keywords.items():
+            if data['count'] >= 2 or len(data['files']) > 1:
+                top_keywords.append({
+                    'word': word,
+                    'count': data['count'],
+                    'files': len(data['files'])
+                })
+
+        top_keywords.sort(key=lambda x: (x['files'], x['count']), reverse=True)
+        top_keywords = top_keywords[:10]
+
+        if not top_keywords:
+            return False
+
+        keyword_summary = "\n".join([
+            f"- {kw['word']} (appears {kw['count']} times in {kw['files']} files)"
+            for kw in top_keywords
+        ])
+
+        prompt = f"""Given these keywords from several documents, what is the common theme?
+
+Keywords:
+{keyword_summary}
+
+Please analyze these keywords and:
+1. Identify the main theme or subject
+2. Determine if these documents are related
+3. Provide a brief explanation of why they belong together
+
+Make sure to:
+- Consider technical and domain-specific terminology
+- Look for patterns in code structure or medical terminology
+- Identify common programming concepts or medical conditions
+- Group similar technical documentation together
+- Consider both high-level concepts and specific implementations
+
+Analysis:"""
+
+        try:
+            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=150,
+                    temperature=0.7,
+                    top_p=0.9,
+                    do_sample=True
+                )
+            decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            analysis = decoded.split("Analysis:")[-1].strip()
+
+            if not analysis or not isinstance(analysis, str):
+                logging.error(f"Invalid analysis text: {analysis}")
+                return False
+
+            analysis_embedding = self.embedder.encode(analysis)
+            if isinstance(analysis_embedding, str):
+                logging.error("Analysis embedding is still a string!")
+                return False
+            analysis_embedding = np.array(analysis_embedding).flatten()
+
+            analysis_similarities = []
+            for i, embedding in enumerate(content_embeddings):
+                embedding = np.array(embedding).flatten()
+                analysis_tensor = torch.from_numpy(analysis_embedding)
+                content_tensor = torch.from_numpy(embedding)
+                if torch.cuda.is_available():
+                    analysis_tensor = analysis_tensor.cuda()
+                    content_tensor = content_tensor.cuda()
+                similarity = torch.nn.functional.cosine_similarity(
+                    analysis_tensor,
+                    content_tensor,
+                    dim=0
+                )
+                analysis_similarities.append(similarity.item())
+
+            avg_analysis_similarity = sum(analysis_similarities) / len(analysis_similarities)
+
+            # Adjusted thresholds for technical content
+            return (avg_similarity > 0.2 or avg_chunk_similarity > 0.3) and avg_analysis_similarity > 0.2
+
+        except Exception as e:
+            logging.error(f"Error in content similarity analysis: {str(e)}")
+            return False
+
+    def _generate_prompt(self, file_paths: List[Path], file_contents: Dict[Path, str]) -> str:
         """
-        Analyze content to identify patterns and characteristics.
+        Generate a prompt for the model to suggest a category.
         Args:
-            content: File content
-            file_path: Path of the file being analyzed
+            file_paths: List of file paths in the cluster
+            file_contents: Dictionary mapping file paths to their contents
         Returns:
-            Dictionary of content analysis results
+            Formatted prompt string
         """
-        content = content.lower()
-        analysis = {
-            "format": {
-                "is_code": False,
-                "is_list": False,
-                "is_table": False,
-                "is_narrative": False
-            },
-            "structure": [],
-            "semantic_features": set(),
-            "content_patterns": set()
+        # First check if files are similar enough to be grouped
+        if not self._analyze_content_similarity(file_paths, file_contents):
+            return None  # Signal that these files should not be grouped together
+        
+        file_info = []
+        
+        for path in file_paths:
+            content = file_contents.get(path, "")
+            # Get first 3 lines or first 200 characters
+            preview = content.strip().split("\n")[:3]
+            preview = "\n".join(preview)[:200]
+            file_info.append(f"File: {path.name}\nPreview:\n{preview}\n")
+        
+        prompt = f"""Below is a list of files and a short content preview from each file.
+
+Your task is to suggest a short, descriptive category name that reflects the main theme or purpose shared by these files.
+
+Files:
+{''.join(file_info)}
+
+Instructions:
+- Analyze the actual content of each file to identify common themes and purposes
+- Create a category name that encompasses all files in the list
+- If the category name contains multiple words, separate them with underscores (e.g., 'project_docs', 'team_meetings')
+- Use common, natural language naming conventions
+- Do not use generic names like 'Miscellaneous' or 'Documents'
+- Base your suggestion purely on the actual content
+- Avoid referencing filenames directly
+- Be specific and meaningful
+- Keep the category name concise (1-3 words)
+- IMPORTANT: Only group files if they share similar content or purpose
+- IMPORTANT: Look for common themes in the actual content, not just in filenames
+- IMPORTANT: Consider the purpose and context of the content
+- IMPORTANT: Group similar content types together (e.g., all recipes should be in one category)
+- IMPORTANT: Do not combine unrelated content types unless they share a clear common theme
+- IMPORTANT: Consider file types and their typical purposes (e.g., recipes, documentation, notes, etc.)
+
+Category name:"""
+        return prompt
+
+    def _get_category_suggestion(self, prompt: str) -> str:
+        """
+        Get category suggestion from the model.
+        Args:
+            prompt: Formatted prompt string
+        Returns:
+            Suggested category name
+        """
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=20,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True,
+                repetition_penalty=1.2
+            )
+        
+        response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        category = response.split("Category name:")[-1].strip()
+        
+        # Clean up the category name
+        category = category.split("\n")[0].strip()  # Take only the first line
+        category = re.sub(r'[^\w\s-]', '', category)  # Remove special characters
+        category = category.strip()
+        
+        # Replace spaces with underscores
+        category = category.replace(' ', '_')
+        
+        # Normalize common category types
+        category = category.lower()
+        
+        # Define category mappings
+        category_mappings = {
+            # Recipes and food
+            r'recipe|food|cooking|dish|meal': 'recipes',
+            r'grocery|shopping|ingredients': 'grocery_lists',
+            
+            # Documentation
+            r'doc|documentation|api|reference|guide|manual': 'documentation',
+            r'readme|setup|install|config': 'setup_docs',
+            
+            # Notes and learning
+            r'note|study|learning|lecture|course': 'notes',
+            r'math|calculation|formula|equation': 'math_notes',
+            
+            # Work and projects
+            r'task|todo|project|work|assignment': 'tasks',
+            r'meeting|minutes|discussion|agenda': 'meetings',
+            r'report|summary|analysis|review': 'reports',
+            
+            # Planning
+            r'plan|schedule|itinerary|agenda': 'plans',
+            r'travel|trip|vacation|journey': 'travel_plans',
+            r'workout|exercise|fitness|training': 'workout_plans',
+            
+            # Code
+            r'code|script|program|software': 'code',
+            r'python|java|cpp|csharp|javascript': 'code',
+            
+            # Generic
+            r'misc|other|various|general': 'miscellaneous'
         }
         
-        # Check filename for patterns
-        if file_path:
-            filename = file_path.stem.lower()
-            if any(word in filename for word in ['todo', 'task', 'checklist']):
-                analysis["content_patterns"].add("todo")
-            if any(word in filename for word in ['meeting', 'agenda', 'minutes']):
-                analysis["content_patterns"].add("meeting")
-            if any(word in filename for word in ['shopping', 'grocery']):
-                analysis["content_patterns"].add("shopping")
-            if any(word in filename for word in ['code', 'script', 'py']):
-                analysis["content_patterns"].add("code")
+        # Apply category mappings
+        for pattern, mapped_category in category_mappings.items():
+            if re.search(pattern, category, re.IGNORECASE):
+                category = mapped_category
+                break
         
-        # Analyze format
-        if re.search(r'(def|class|import|return|print|function|var|const|let)\s', content):
-            analysis["format"]["is_code"] = True
-            analysis["structure"].append("code")
-            analysis["content_patterns"].add("code")
+        # Handle generic categories
+        if category.lower() in {"documents", "misc", "files", "other"}:
+            category = "miscellaneous"
             
-        if re.search(r'^[\s-]*[-*•]\s', content, re.MULTILINE):
-            analysis["format"]["is_list"] = True
-            analysis["structure"].append("list")
-            
-        if re.search(r'\|.*\|', content) or re.search(r'\t.*\t', content):
-            analysis["format"]["is_table"] = True
-            analysis["structure"].append("table")
-            
-        if len(re.findall(r'[.!?]', content)) > 3:
-            analysis["format"]["is_narrative"] = True
-            analysis["structure"].append("narrative")
+        return category
 
-        # Extract semantic features
-        words = re.findall(r'\b\w{4,}\b', content)
-        word_freq = defaultdict(int)
-        for word in words:
-            word_freq[word] += 1
-            
-        # Add frequent words as semantic features
-        for word, freq in word_freq.items():
-            if freq > 1:  # Lowered threshold to catch more patterns
-                analysis["semantic_features"].add(word)
-                # Direct mapping of common words to patterns
-                if word in ['todo', 'task', 'checklist']:
-                    analysis["content_patterns"].add("todo")
-                elif word in ['meeting', 'agenda', 'minutes']:
-                    analysis["content_patterns"].add("meeting")
-                elif word in ['shopping', 'grocery', 'milk', 'eggs', 'bread']:
-                    analysis["content_patterns"].add("shopping")
-                elif word in ['report', 'document', 'notes']:
-                    analysis["content_patterns"].add("doc")
-
-        # Identify content patterns
-        self._identify_content_patterns(content, analysis)
-        
-        return analysis
-
-    def _identify_content_patterns(self, content: str, analysis: Dict):
-        """
-        Identify patterns in the content.
-        Args:
-            content: File content
-            analysis: Analysis dictionary to update
-        """
-        # Code patterns
-        if analysis["format"]["is_code"]:
-            if re.search(r'def\s+\w+\s*\(', content):
-                analysis["content_patterns"].add("python_function")
-            if re.search(r'class\s+\w+', content):
-                analysis["content_patterns"].add("python_class")
-            if re.search(r'import\s+\w+', content):
-                analysis["content_patterns"].add("python_import")
-
-        # List patterns
-        if analysis["format"]["is_list"]:
-            if re.search(r'^[\s-]*[-*•]\s*[A-Z]', content, re.MULTILINE):
-                analysis["content_patterns"].add("capitalized_list")
-            if re.search(r'^[\s-]*[-*•]\s*\d+\.', content, re.MULTILINE):
-                analysis["content_patterns"].add("numbered_list")
-
-        # Table patterns
-        if analysis["format"]["is_table"]:
-            if re.search(r'\|.*\|.*\|', content):
-                analysis["content_patterns"].add("markdown_table")
-            if re.search(r'\t.*\t', content):
-                analysis["content_patterns"].add("tab_separated")
-
-        # Narrative patterns
-        if analysis["format"]["is_narrative"]:
-            if re.search(r'^#+\s', content, re.MULTILINE):
-                analysis["content_patterns"].add("markdown_headers")
-            if re.search(r'^[A-Z][^.!?]*[.!?]', content, re.MULTILINE):
-                analysis["content_patterns"].add("proper_sentences")
-
-    def _get_short_category(self, analysis: Dict) -> str:
-        """
-        Get a short category name based on content analysis.
-        Args:
-            analysis: Content analysis dictionary
-        Returns:
-            Short category name
-        """
-        # First try to match content patterns
-        for pattern in analysis["content_patterns"]:
-            if pattern in CATEGORY_MAPPINGS:
-                return CATEGORY_MAPPINGS[pattern]
-        
-        # Then try to match format
-        for format_type, is_present in analysis["format"].items():
-            if is_present and format_type in FALLBACK_CATEGORIES:
-                return FALLBACK_CATEGORIES[format_type]
-        
-        # Finally, check semantic features
-        for feature in analysis["semantic_features"]:
-            if feature in CATEGORY_MAPPINGS:
-                return CATEGORY_MAPPINGS[feature]
-        
-        return FALLBACK_CATEGORIES["default"]
-
-    def suggest_categories(self, clusters: Dict[int, List[Path]], file_contents: Dict[Path, str]) -> Dict[int, str]:
+    def suggest_categories(self, clusters: Dict[str, List[Path]], file_contents: Dict[Path, str]) -> Dict[str, str]:
         """
         Suggest categories for clusters of files.
         Args:
@@ -259,37 +369,49 @@ class CategorySuggester:
             Dictionary mapping cluster IDs to category names
         """
         categories = {}
+        new_clusters = {}  # Store new clusters here
         
+        # First, process all clusters
         for cluster_id, file_paths in clusters.items():
-            # Analyze all files in the cluster
-            cluster_patterns = set()
-            cluster_features = set()
-            format_counts = defaultdict(int)
-            
-            for path in file_paths:
-                content = file_contents.get(path, "")
-                analysis = self._analyze_content(content, path)  # Pass file path for filename analysis
-                cluster_patterns.update(analysis["content_patterns"])
-                cluster_features.update(analysis["semantic_features"])
-                
-                # Count format types
-                for format_type, is_present in analysis["format"].items():
-                    if is_present:
-                        format_counts[format_type] += 1
-            
-            # Get the most common format
-            dominant_format = max(format_counts.items(), key=lambda x: x[1])[0] if format_counts else "default"
-            
-            # Create a combined analysis
-            combined_analysis = {
-                "content_patterns": cluster_patterns,
-                "semantic_features": cluster_features,
-                "format": {k: v > 0 for k, v in format_counts.items()},
-                "dominant_format": dominant_format
-            }
-            
-            # Get short category name
-            category = self._get_short_category(combined_analysis)
-            categories[cluster_id] = category
-            
+            prompt = self._generate_prompt(file_paths, file_contents)
+            if prompt is None:
+                # If files are too different, create separate categories
+                for i, path in enumerate(file_paths):
+                    new_id = f"{cluster_id}_{i}"
+                    categories[new_id] = f"Category_{path.stem}"
+                    new_clusters[new_id] = [path]
+            else:
+                try:
+                    category = self._get_category_suggestion(prompt)
+                    categories[cluster_id] = category
+                    new_clusters[cluster_id] = file_paths
+                    logging.info(f"Cluster {cluster_id} suggested category: {category}")
+                except Exception as e:
+                    logging.error(f"Error generating category for cluster {cluster_id}: {str(e)}")
+                    categories[cluster_id] = f"Category_{cluster_id}"
+                    new_clusters[cluster_id] = file_paths
+        
+        # Update the clusters dictionary with the new structure
+        clusters.clear()
+        clusters.update(new_clusters)
+        
         return categories
+
+    def get_category_guidelines(self) -> Dict[str, str]:
+        """
+        Get guidelines for categories.
+        Returns:
+            Dictionary mapping category names to their guidelines
+        """
+        # Since we're using dynamic categories, we'll return a generic guideline
+        return {
+            "guidelines": """
+Categories are generated based on the content of files in each cluster.
+Each category name reflects the main theme or purpose shared by its files.
+Categories are designed to be:
+- Short and descriptive (1-3 words)
+- Based on actual content
+- Specific and meaningful
+- Using natural language
+"""
+        }

@@ -14,22 +14,8 @@ UTILS_DIR = PROJECT_ROOT / "utils"
 # Model settings
 MODEL_NAME = "mistral-7b"  # Local model name
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-MAX_SEQUENCE_LENGTH = 512
-BATCH_SIZE = 32
-
-# Clustering settings
-MIN_CLUSTER_SIZE = 3
-CLUSTER_THRESHOLD = 0.7
-
-# File processing settings
-SUPPORTED_EXTENSIONS = {
-    '.txt', '.md', '.py', '.js', '.html', '.css', '.json',
-    '.xml', '.yaml', '.yml', '.csv', '.tsv'
-}
-
-# Logging settings
-LOG_LEVEL = "INFO"
-LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 # Local Mistral 7B model path
-LOCAL_MISTRAL_PATH = os.getenv("LOCAL_MISTRAL_PATH", r"C:\Users\meyyu\Desktop\mistral_7") 
+LOCAL_MISTRAL_PATH = os.getenv("LOCAL_MISTRAL_PATH")
+if not LOCAL_MISTRAL_PATH:
+    raise ValueError("LOCAL_MISTRAL_PATH environment variable is not set. Please check your .env file.") 

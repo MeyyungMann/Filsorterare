@@ -1,4 +1,4 @@
-# python main.py --input-dir ./test_file
+# python main.py --input-dir ./test_files
 # python main.py --input-dir ./test_files --dry-run
 # add commit comment
 
@@ -48,7 +48,7 @@ def parse_args():
     )
     return parser.parse_args()
 
-def get_user_confirmation(categories: Dict[int, str], clusters: Dict[int, List[Path]]) -> bool:
+def get_user_confirmation(categories: Dict[str, str], clusters: Dict[str, List[Path]]) -> bool:
     """Get user confirmation for the suggested categories."""
     print("\nSuggested Categories:")
     for cluster_id, category in categories.items():
